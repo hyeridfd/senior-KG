@@ -1,5 +1,5 @@
 import streamlit as st
-from dotenv import load_dotenv
+#from dotenv import load_dotenv
 # 기존에 작성한 kg_enhanced_obesity_rag 함수가 포함된 파일을 import 하거나 아래에 정의하세요.
 
 # 1. 페이지 설정
@@ -55,3 +55,4 @@ if st.button("식단 분석 시작"):
                 st.error(f"오류가 발생했습니다: {e}")
     else:
         st.warning("질문을 입력해주세요.")
+

@@ -1,58 +1,130 @@
 import streamlit as st
-#from dotenv import load_dotenv
-# 기존에 작성한 kg_enhanced_obesity_rag 함수가 포함된 파일을 import 하거나 아래에 정의하세요.
+import os
+from dotenv import load_dotenv
+from langchain_neo4j import Neo4jGraph
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 
-# 1. 페이지 설정
-st.set_page_config(page_title="노인 비만 맞춤형 영양 관리 AI", page_icon="🥗", layout="wide")
-
-# 2. 스타일 및 제목
+# 1. 페이지 및 스타일 설정
+st.set_page_config(page_title="노인 비만 영양 관리 AI", page_icon="🥗", layout="wide")
 st.title("🥗 노인 비만 맞춤형 영양 관리 AI 비서")
-st.markdown("""
-이 시스템은 **'비만 진료지침 2022'**와 **수산물(Blue Food) 레시피 DB**를 결합하여 
-어르신들에게 가장 적합한 의학적 근거 기반 식단을 제안합니다.
----
-""")
+st.markdown("---")
 
-# 3. 사이드바 (DB 연결 상태 확인용)
+# 2. 데이터베이스 및 API 연결 (캐싱 처리로 속도 향상)
+@st.cache_resource
+def init_connections():
+    load_dotenv()
+    
+    # 질병 지침 DB (disease)
+    graph_guideline = Neo4jGraph(
+        url=os.getenv("GUIDELINE_URI"),
+        username=os.getenv("GUIDELINE_USERNAME"),
+        password=os.getenv("GUIDELINE_PASSWORD"),
+        database=os.getenv("GUIDELINE_DATABASE")
+    )
+    
+    # 레시피 및 영양 DB (foodgraph)
+    graph_recipe = Neo4jGraph(
+        url=os.getenv("RECIPE_URI"),
+        username=os.getenv("RECIPE_USERNAME"),
+        password=os.getenv("RECIPE_PASSWORD"),
+        database=os.getenv("RECIPE_DATABASE")
+    )
+    
+    llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    return graph_guideline, graph_recipe, llm
+
+graph_guideline, graph_recipe, llm = init_connections()
+
+# 사이드바 상태 표시
 with st.sidebar:
-    st.header("⚙️ 시스템 상태")
-    # 실제 연결 확인 로직을 넣을 수 있습니다.
-    st.success("✅ Disease DB 연결됨 (7689)")
-    st.success("✅ FoodGraph DB 연결됨 (7687)")
-    st.info("연구원: 류혜리 (세계푸드테크창의센터)")
+    st.header("⚙️ 시스템 정보")
+    st.success(f"✅ 지침 DB: {graph_guideline._database}")
+    st.success(f"✅ 레시피 DB: {graph_recipe._database}")
+    st.info(f"👨‍🔬 연구원: 류혜리 (세계푸드테크창의센터)")
 
-# 4. 사용자 입력 섹션
-question = st.text_input("질문을 입력하세요:", placeholder="예: 근감소증이 있는 비만 어르신을 위한 고단백 식단을 추천해 줘.")
+# 3. 핵심 RAG 로직 (혜리 님의 코드 이식)
+def kg_enhanced_obesity_rag(question):
+    try:
+        # 지침 DB 검색 (Vector Store 객체는 미리 정의되어 있어야 함)
+        # 예시에서는 vector_store를 전역 변수로 가정하거나 함수 내부에서 초기화
+        docs = vector_store.similarity_search(question, k=3)
+        doc_ids = [doc.metadata["id"] for doc in docs if "id" in doc.metadata]
+        
+        guideline_query = """
+        MATCH (ch:Chapter)-[:HAS_SECTION]->(sec:Section)-[:HAS_RECOMMENDATION]->(reco:Recommendation)
+        WHERE reco.id IN $doc_ids
+        RETURN ch.title AS chapter_title, reco.content AS content
+        """
+        guideline_results = graph_guideline.query(guideline_query, {"doc_ids": doc_ids})
+        full_guideline_text = " ".join([r['content'] for r in guideline_results])
 
-if st.button("식단 분석 시작"):
-    if question:
-        with st.spinner('지침과 레시피 DB를 분석 중입니다...'):
-            try:
-                # 혜리 님이 만든 RAG 함수 호출
-                # response = kg_enhanced_obesity_rag(question) 
-                
-                # 가상의 결과 예시 (실제 실행 시 위 함수 결과 사용)
-                # answer = response 
-                
-                # 5. 결과 레이아웃 구성
-                col1, col2 = st.columns(2)
+        # 영양소 기준 설정
+        min_protein = 20 if '단백질' in full_guideline_text or '근감소' in full_guideline_text else 0
+        max_sodium = 500 if '나트륨' in full_guideline_text or '어르신' in full_guideline_text else 2000
+        max_kcal = 600 if '저열량' in full_guideline_text or '비만' in full_guideline_text else 2000
 
-                with col1:
-                    st.subheader("📋 의학적 지침 근거")
-                    # 예: st.write(answer_split_by_guideline)
-                    st.info("비만 진료지침 2022에 의거하여 단백질 섭취와 열량 제한을 권고합니다.")
+        # 레시피 DB 탐색 (Bottom-Up 탐색)
+        recipe_query = """
+        MATCH (n:Nutrition)
+        WHERE n.protein_g >= $min_protein 
+          AND n.Sodium_mg <= $max_sodium
+          AND n.energy_kcal <= $max_kcal
+        MATCH (r:Recipe)-[:CONTAINS]->(n)
+        OPTIONAL MATCH (f:Food)-[:HAS_INGREDIENT]->(r)
+        RETURN 
+            f.title AS food_title,
+            r.title AS recipe_title,
+            COLLECT(DISTINCT f.title) AS ingredients,
+            n.energy_kcal AS kcal, 
+            n.protein_g AS protein, 
+            n.Sodium_mg AS sodium
+        ORDER BY n.protein_g DESC
+        LIMIT 3
+        """
+        recipe_results = graph_recipe.query(recipe_query, {
+            "min_protein": min_protein, "max_sodium": max_sodium, "max_kcal": max_kcal
+        })
 
-                with col2:
-                    st.subheader("🍽️ 맞춤형 추천 메뉴")
-                    # 예: st.success(answer_split_by_recipe)
-                    st.success("추천 메뉴: 전복 두부 스테이크 (단백질 25g 함유)")
+        recipe_context = ""
+        for rec in recipe_results:
+            recipe_context += f"- 추천 메뉴: {rec['food_title']}\n"
+            recipe_context += f"- 주요 레시피: {rec['recipe_title']}\n"
+            recipe_context += f"  * 주요 식재료: {', '.join(rec['ingredients'])}\n"
+            recipe_context += f"  * 영양분석: {rec['kcal']}kcal, 단백질 {rec['protein']}g, 나트륨 {rec['sodium']}mg\n\n"
 
-                st.divider()
-                st.markdown("### 🤖 종합 가이드라인")
-                st.write("위 메뉴는 지침에서 강조하는 노인 비만 관리 수칙을 충족합니다.")
+        kg_context = f"[지침 근거]\n" + "\n".join([f"- {r['chapter_title']}: {r['content']}" for r in guideline_results])
+        kg_context += f"\n\n[영양 분석 기반 추천 식단]\n" + (recipe_context if recipe_context else "조건에 맞는 레시피를 찾지 못했습니다.")
 
-            except Exception as e:
-                st.error(f"오류가 발생했습니다: {e}")
+        prompt = PromptTemplate(
+            template="""당신은 비만 지침의 영양 기준을 엄격히 준수하는 AI 영양사입니다. 
+            주어진 지침 근거를 먼저 설명하고, 영양 수치가 검증된 레시피를 추천하세요. 
+            {context} 
+            질문: {question}""", 
+            input_variables=["context", "question"]
+        )
+        
+        chain = prompt | llm | StrOutputParser()
+        return chain.invoke({"question": question, "context": kg_context})
+    except Exception as e:
+        return f"⚠️ 오류 발생: {str(e)}"
+
+# 4. 사용자 UI 구성
+st.subheader("❓ 맞춤형 식단 상담")
+user_input = st.text_input("상담하고 싶은 내용을 입력하세요.", placeholder="비만인 어르신을 위한 단백질 식단을 추천해 주세요.")
+
+if st.button("결과 확인"):
+    if user_input:
+        with st.spinner("지침과 식단 데이터를 분석 중입니다..."):
+            answer = kg_enhanced_obesity_rag(user_input)
+            
+            # 레이아웃 분할 출력
+            st.success("✅ 분석 완료")
+            st.markdown("### 🤖 인공지능 영양사 답변")
+            st.write(answer)
+            
+            st.divider()
+            st.caption("※ 본 정보는 대한비만학회 진료지침 2022를 근거로 작성되었습니다.")
     else:
-        st.warning("질문을 입력해주세요.")
-
+        st.warning("내용을 입력해 주세요.")

@@ -11,6 +11,17 @@ st.set_page_config(page_title="노인 비만 영양 관리 AI", page_icon="🥗"
 st.title("🥗 노인 비만 맞춤형 영양 관리 AI 비서")
 st.markdown("---")
 
+# 지침 DB 연결 설정
+GUIDELINE_URI = st.secrets["GUIDELINE_URI"]
+GUIDELINE_USERNAME = st.secrets["GUIDELINE_USERNAME"]
+GUIDELINE_PASSWORD = st.secrets["GUIDELINE_PASSWORD"]
+GUIDELINE_DATABASE = st.secrets["GUIDELINE_DATABASE"]
+
+RECIPE_URI = st.secrets["RECIPE_URI"]
+RECIPE_USERNAME = st.secrets["RECIPE_USERNAME"]
+RECIPE_PASSWORD = st.secrets["RECIPE_PASSWORD"]
+RECIPE_DATABASE = st.secrets["RECIPE_DATABASE"]
+
 # 2. 데이터베이스 및 API 연결 (캐싱 처리로 속도 향상)
 @st.cache_resource
 def init_connections():
@@ -18,10 +29,10 @@ def init_connections():
     
     # 질병 지침 DB (disease)
     graph_guideline = Neo4jGraph(
-        url=os.getenv("GUIDELINE_URI"),
-        username=os.getenv("GUIDELINE_USERNAME"),
-        password=os.getenv("GUIDELINE_PASSWORD"),
-        database=os.getenv("GUIDELINE_DATABASE")
+        url=GUIDELINE_URI,
+        username=GUIDELINE_USERNAME,
+        password=GUIDELINE_PASSWORD,
+        database=GUIDELINE_DATABASE
     )
     
     # 레시피 및 영양 DB (foodgraph)
@@ -128,3 +139,4 @@ if st.button("결과 확인"):
             st.caption("※ 본 정보는 대한비만학회 진료지침 2022를 근거로 작성되었습니다.")
     else:
         st.warning("내용을 입력해 주세요.")
+

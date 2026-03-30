@@ -25,9 +25,10 @@ RECIPE_DATABASE = st.secrets["RECIPE_DATABASE"]
 # 2. 데이터베이스 및 API 연결 (캐싱 처리로 속도 향상)
 @st.cache_resource
 def init_connections():
+    # load_dotenv()는 로컬 개발용으로만 유효, Streamlit Cloud에서는 st.secrets 사용
     load_dotenv()
     
-    # 질병 지침 DB (disease)
+    # 지침 DB
     graph_guideline = Neo4jGraph(
         url=GUIDELINE_URI,
         username=GUIDELINE_USERNAME,
@@ -35,12 +36,12 @@ def init_connections():
         database=GUIDELINE_DATABASE
     )
     
-    # 레시피 및 영양 DB (foodgraph)
+    # ✅ 레시피 DB도 st.secrets 사용 (os.getenv → st.secrets로 변경)
     graph_recipe = Neo4jGraph(
-        url=os.getenv("RECIPE_URI"),
-        username=os.getenv("RECIPE_USERNAME"),
-        password=os.getenv("RECIPE_PASSWORD"),
-        database=os.getenv("RECIPE_DATABASE")
+        url=RECIPE_URI,
+        username=RECIPE_USERNAME,
+        password=RECIPE_PASSWORD,
+        database=RECIPE_DATABASE
     )
     
     llm = ChatOpenAI(model="gpt-4o", temperature=0)
